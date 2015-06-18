@@ -40,7 +40,7 @@ Examples:
         	'key': args['--key'],
 	}
 
-	hostname, username, password = "192.168.10.1", "root", "password"
+	hostname, username, password = "192.168.10.1", "root", "server9090"
 	session=XenAPI.Session('https://'+hostname)
 	session.login_with_password(username, password)
 	sx=session.xenapi
@@ -51,15 +51,16 @@ Examples:
 
 	if (msg['method'] == 'vm.get') and (msg['properties']):
 		print vmget(sx, msg['hostname'], msg['name'], msg['properties'], msg['key'])
-#	elif (msg['method'] == 'vm.get') and (msg['properties'] == 'memoryMB'):
-#		vmget(sx, msg['hostname'], msg['name'], msg['method'], msg['properties'])
+	if (msg['method'] == 'host.get') and (msg['properties']):
+		print hostget(sx, msg['hostname'], msg['properties'], msg['key'])
 
 	session.logout()
 
 def getAll(xenHostSession, rrd_updates):
-	global hostsList, perf_mon
+	global hostsList, perf_mon, host_perf_mon
 	hostsList = {}
 	perf_mon = {}
+	host_perf_mon = {}
 	for host in xenHostSession.host.get_all():
 		vms = {}
 		for vm in xenHostSession.host.get_resident_VMs(host):
@@ -68,12 +69,12 @@ def getAll(xenHostSession, rrd_updates):
 				perf_mon[uuid] = {}
 				for param in rrd_updates.get_vm_param_list(uuid):
 					perf_mon[uuid][param] = " ".join(["%s" % (rrd_updates.get_vm_data(uuid,param,row)) for row in range(rrd_updates.get_nrows())])
-					#perf_mon[uuid] = {param: rrd_updates.get_vm_data(uuid,param,row) for row in range(rrd_updates.get_nrows())}
-					#print uuid, param, "".join(["%s" % rrd_updates.get_vm_data(uuid,param,row) for row in range(rrd_updates.get_nrows())])
 
 				vms[xenHostSession.VM.get_name_label(vm)] = vm
 
 		hostsList[host] = vms
+		for param in rrd_updates.get_host_param_list():
+        		host_perf_mon[param] = " ".join(["%s" % (rrd_updates.get_host_data(param,row)) for row in range(rrd_updates.get_nrows())])
 
 	return hostsList, perf_mon
 
@@ -85,11 +86,11 @@ def vmget(xenHostSession, xenhost, vm, prop, key):
 
 			elif prop == 'memoryTotalMB':
 				metrics = xenHostSession.VM.get_metrics(hostsList[host][vm])
-				return int(xenHostSession.VM_metrics.get_memory_actual(metrics))/1024
+				return (float(xenHostSession.VM_metrics.get_memory_actual(metrics))/1024)/1024
 
 			elif prop == 'memoryFreeMB':
 				if 'memory_internal_free' in perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]:
-					return float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]['memory_internal_free'])/1024
+					return (float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]['memory_internal_free'])/1024)/1024
 
 			elif prop == 'CPU.Total':
 				metrics = xenHostSession.VM.get_metrics(hostsList[host][vm])
@@ -126,13 +127,12 @@ def vmget(xenHostSession, xenhost, vm, prop, key):
 				return json.dumps(data)
 
 			elif prop == 'net.received':
-				if key:
-					if key+'_rx' in perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]:
-						return float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])][key+'_rx'])
+				if key+'_rx' in perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]:
+					return float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])][key+'_rx'])
+
 			elif prop == 'net.transmitted':
-				if key:
-					if key+'_tx' in perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]:
-						return float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])][key+'_tx'])
+				if key+'_tx' in perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]:
+					return float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])][key+'_tx'])
 
 			elif prop == 'disk.discoverer':
 				VBDs = xenHostSession.VM.get_VBDs(hostsList[host][vm])
@@ -147,14 +147,50 @@ def vmget(xenHostSession, xenhost, vm, prop, key):
 				return json.dumps(data)
 
 			elif prop == 'disk.read':
-				if key:
-					if key+'_read' in perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]:
-						return float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])][key+'_read'])
+				if key+'_read' in perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]:
+					return float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])][key+'_read'])
 
 			elif prop == 'disk.write':
-				if key:
-					if key+'_write' in perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]:
-						return float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])][key+'_write'])
+				if key+'_write' in perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])]:
+					return float(perf_mon[xenHostSession.VM.get_uuid(hostsList[host][vm])][key+'_write'])
+
+def hostget(xenHostSession, xenhost, prop, key):
+	for host in hostsList.keys():
+		if xenHostSession.host.get_hostname(host) == xenhost:
+			if prop == 'CPU.Total':
+				return xenHostSession.host.get_cpu_info(host)['cpu_count']
+
+			elif prop == 'CPU.Utilisation':
+				return host_perf_mon['cpu_avg']
+
+			elif prop == 'loadavg':
+				return host_perf_mon['loadavg']
+
+			elif prop == 'memoryTotalMB':
+				return float(host_perf_mon['memory_total_kib'])/1024
+
+			elif prop == 'memoryFreeMB':
+				return float(host_perf_mon['memory_free_kib'])/1024
+
+			elif prop == 'net.discoverer':
+				PIFs = xenHostSession.host.get_PIFs(host)
+                                pifs = []
+                                i = 0
+                                for pif in PIFs:
+					device = xenHostSession.PIF.get_device(pif)
+                                        pifs.insert(i, {"{#PIFNAME}":"pif_"+device})
+                                        i+=1
+
+                                data = {"data":pifs}
+                                return json.dumps(data)
+
+			elif prop == 'net.transmitted':
+				if key+'_tx' in host_perf_mon:
+					return float(host_perf_mon[key+'_tx'])
+
+			elif prop == 'net.received':
+				if key+'_rx' in host_perf_mon:
+					return float(host_perf_mon[key+'_rx'])
 
 if __name__ == '__main__':
 	main()
