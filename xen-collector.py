@@ -40,7 +40,7 @@ Examples:
         	'key': args['--key'],
 	}
 
-	hostname, username, password = "192.168.10.1", "root", "server9090"
+	hostname, username, password = "192.168.10.1", "root", "password"
 	session=XenAPI.Session('https://'+hostname)
 	session.login_with_password(username, password)
 	sx=session.xenapi
